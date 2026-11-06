@@ -1,0 +1,348 @@
+# MuChess 语言文件
+# 这是唯一的玩家可见文案来源，代码里只出现键名；每个值都是完整或可嵌入的 MiniMessage 片段。
+# 配色角色固定：系统与成功用 gold，命令与可操作数据用 aqua，正文用 gray，
+# 警告用 #fbbf24，失败用 #fda4af，分隔符用 dark_gray。
+# 渐变只用于终局播报与菜单/帮助标题，高频提示不用渐变或整句加粗。
+#
+# lang-version 是文案版本标记，插件启动时拿它和内置模板比对：
+# 不一致就把当前文件备份成 zh_CN.yml.bak-<旧版本> 再释放新模板，一致则一个字节都不动。
+# 改过文案的服主升级后请到备份文件里把自己的句子迁回来。这个键不需要手改。
+lang-version: "1.12.0"
+
+prefix: "<dark_gray>[</dark_gray><gold>棋</gold><dark_gray>]</dark_gray> "
+
+# ---- 棋盘放置与拆除 ----
+# 红黑阵营由系统随机分配，不在放置提示里提供直选入口。
+board-no-space: "<#fbbf24>无法放置</#fbbf24> <dark_gray>»</dark_gray> <gray>棋盘需要 2x2 空地</gray>"
+# 补块失败与选址无关，单独一条：共用 board-no-space 会让人以为是地方不够，把排查带偏
+board-incomplete: "<#fda4af>棋盘没铺完整</#fda4af> <dark_gray>»</dark_gray> <gray>已撤销，请把这次的日志发给服主</gray>"
+board-remove-in-game: "<#fda4af>对局进行中</#fda4af> <dark_gray>»</dark_gray> <gray>无法移除棋盘，先 </gray><aqua>/chess resign</aqua>"
+board-not-found: "<#fbbf24>附近无棋盘</#fbbf24>"
+board-not-looked: "<#fbbf24>没对着棋盘</#fbbf24> <gray>准星要落在棋盘上</gray>"
+board-force-removed: "<gray>棋盘已拆</gray>"
+board-force-removed-playing: "<gray>棋盘已拆，这局</gray><#fbbf24>正在进行</#fbbf24><gray>，已告知局中的人</gray>"
+board-force-removed-notice: "<#fbbf24>这局被管理员拆了</#fbbf24> <dark_gray>»</dark_gray> <gray>操作人 </gray><gold><admin></gold>"
+board-limit-reached: "<#fbbf24>无法放置</#fbbf24> <dark_gray>»</dark_gray> <gray>已达棋盘数量上限 </gray><gold><limit></gold>"
+# 这条走动作栏（Msg.actionBar），不带 prefix；占宽度的前缀和分隔符在动作栏里反而影响可读性。
+# 不用聊天栏的原因：放置失败瞬间玩家盯着世界里的家具，动作栏更显眼；配合粒子标记阻挡格。
+board-furniture-overlap: "<#fda4af>这里有别的 CE 家具挡着</#fda4af> <dark_gray>»</dark_gray> <gray>换个空地方放</gray>"
+
+# ---- 棋盘菜单 ----
+# shift+右键棋盘打开的箱子菜单。与棋盘上方的悬浮字是两个入口，指向同一套入座与开局流程。
+#
+# 菜单里只有一枚按钮，按对局状态在 menu-join-* 与 menu-start-* 之间切换：
+# 没坐满时是"加入对局"，坐满且还没开局时是"开始对局"。所以关掉悬浮字
+# （config.yml 的 board-label.enabled）之后，这个菜单仍能把一副棋盘走完到开局。
+#
+# 这几条是箱子菜单里的物品名与 lore，不是聊天栏消息，所以都不带 prefix 与 » 分隔符。
+# 只有标题用渐变（菜单标题属于仪式性文案），物品名按普通提示处理，用纯色。
+#
+# 标题与入座 lore 按棋种分流，键名后缀是 GameType.id。
+# 早先这两条写死"象棋棋盘""红方或黑方"，于是围棋盘和五子棋盘打开菜单也是这套说法 ——
+# 那两个棋种的盘上根本没有红子。这与 GameType.sideSlug 当初修掉的是同一类 bug。
+# 加新棋种时必须同时补这两条，缺键会导致该棋种的菜单直接打不开（不展示半成品菜单）。
+menu-board-title-xiangqi: "<gradient:#fbbf24:#7dd3fc><bold>象棋棋盘</bold></gradient>"
+menu-board-title-gomoku: "<gradient:#fbbf24:#7dd3fc><bold>五子棋棋盘</bold></gradient>"
+menu-board-title-go: "<gradient:#fbbf24:#7dd3fc><bold>围棋棋盘</bold></gradient>"
+menu-join-name: "<gold>加入对局</gold>"
+menu-join-lore-xiangqi: "<gray>点击后随机分配红方或黑方</gray>"
+menu-join-lore-gomoku: "<gray>点击后随机分配黑棋或白棋</gray>"
+menu-join-lore-go: "<gray>点击后随机分配黑棋或白棋</gray>"
+# 开局按钮的 lore 要说清"点了会发生什么"：棋子是这一刻才铺上棋盘的，
+# 在此之前盘面一直是空的，玩家需要知道这一步才是真正开始下。
+# 这两条与棋种无关（摆子这件事三个棋种一样），所以不分流。
+menu-start-name: "<gold>开始对局</gold>"
+menu-start-lore: "<gray>双方已入座，点击后摆好棋子开始</gray>"
+# 围棋开局背景音乐的开关按钮，只在围棋盘且 config.yml 的 go.opening-bgm.enabled 打开时出现。
+# 名字写**当前状态**，lore 写点下去的效果：反过来写（名字写动作）会让人分不清
+# "关闭音乐"说的是现在没声还是按了就没声。
+# 这一档只有围棋有，所以不按棋种分流。
+menu-bgm-on-name: "<gold>背景音乐已开</gold>"
+menu-bgm-on-lore: "<gray>点击关掉这局的音乐</gray>"
+menu-bgm-off-name: "<gray>背景音乐已关</gray>"
+menu-bgm-off-lore: "<gray>点击给这局放上背景音乐</gray>"
+# 对局中的操作按钮。求和、认输、悔棋、每手限时这四条都是对局层面的事，不碰棋子，
+# 三个棋种说法一样，所以和 menu-start-* 一样不按棋种分流。
+#
+# 布局上求和占中央格（延续加入与开始按钮的"主位"），认输离中心两格：
+# 认输是这一屏唯一不可撤销的操作，放远一点能少几次手滑判负，点了还要再确认一次。
+# 认输的名字用失败色，让它在一排金色按钮里显眼一点。
+menu-draw-name: "<gold>求和</gold>"
+menu-draw-lore: "<gray>向对手提和，对方同意才算和棋</gray>"
+menu-undo-name: "<gold>悔棋</gold>"
+menu-undo-lore: "<gray>请求撤回自己刚走的一手，对方同意才生效</gray>"
+menu-resign-name: "<#fda4af>认输</#fda4af>"
+menu-resign-lore: "<gray>认输判负，点击后需再确认一次</gray>"
+# 限时按钮的名字必须带上当前档位：图标是同一个钟，不写值点一下看不出变化。
+# 四条 value 分别对应"跟随全局的秒数""跟随全局但全局不限时""本局不限时""本局自定秒数"，
+# 把"跟随全局"标出来是因为服主改了全局之后，跟随档的实际秒数会跟着变。
+menu-timeout-name: "<gold>每手限时</gold> <dark_gray>»</dark_gray> <value>"
+menu-timeout-lore: "<gray>点击换一档，只影响这一局</gray>"
+menu-timeout-value-global: "<aqua><seconds></aqua><gray> 秒（跟随全局）</gray>"
+menu-timeout-value-global-none: "<gray>不限时（跟随全局）</gray>"
+menu-timeout-value-none: "<gray>本局不限时</gray>"
+menu-timeout-value-seconds: "<aqua><seconds></aqua><gray> 秒</gray>"
+
+# ---- 求和与悔棋请求 ----
+# 前六条是两种请求共用的失败提示，按"玩家接下来能做什么"分条，不合并成一句笼统的失败。
+request-pending: "<#fbbf24>上一条请求还没答复</#fbbf24> <gray>等它过期再发</gray>"
+request-missing: "<gray>没有等着答复的请求</gray>"
+request-outdated: "<gray>这条请求已经过期</gray>"
+request-own: "<gray>这是你自己发的请求，等对方答复</gray>"
+request-offline: "<#fbbf24>对手不在线</#fbbf24> <gray>没人能答复这条请求</gray>"
+request-bot: "<gray>机器人不答复求和与悔棋</gray>"
+# 两条 prompt 是本插件唯一带按钮的聊天消息。同意与拒绝都用 run_command 直接执行：
+# 这两个动作本身就是"答复"，再让玩家确认一次等于把一次点击拆成两次。
+# 认输那种不可撤销的动作才需要先填进输入框，见 resign-confirm。
+draw-requested: "<gray>已向对手提和，等对方答复</gray>"
+draw-prompt: "<gold><player></gold><gray> 提出和棋 </gray><dark_gray>»</dark_gray> <click:run_command:'/chess accept draw'><hover:show_text:'<gray>同意，这局算和</gray>'><#7dd3fc>[同意]</#7dd3fc></hover></click> <click:run_command:'/chess decline draw'><hover:show_text:'<gray>不同意，继续下</gray>'><#fda4af>[拒绝]</#fda4af></hover></click>"
+draw-declined: "<gray>对手不同意和棋</gray>"
+draw-decline-sent: "<gray>已拒绝对手的和棋请求</gray>"
+undo-requested: "<gray>已向对手请求悔棋，等对方答复</gray>"
+undo-prompt: "<gold><player></gold><gray> 请求悔棋 </gray><dark_gray>»</dark_gray> <click:run_command:'/chess accept undo'><hover:show_text:'<gray>同意，让他重走这一手</gray>'><#7dd3fc>[同意]</#7dd3fc></hover></click> <click:run_command:'/chess decline undo'><hover:show_text:'<gray>不同意，这一手算走了</gray>'><#fda4af>[拒绝]</#fda4af></hover></click>"
+undo-declined: "<gray>对手不同意悔棋</gray>"
+undo-decline-sent: "<gray>已拒绝对手的悔棋请求</gray>"
+undo-disabled: "<gray>本服没开悔棋</gray>"
+undo-no-history: "<gray>还没走过棋，没有可撤的一手</gray>"
+undo-not-own-move: "<gray>只能撤自己刚走的那一手</gray>"
+# 请求发出后对手又走了一手时的提示。双方都会收到：发起方要知道自己的请求为什么没生效，
+# 答复方要知道自己点的同意为什么没反应。
+undo-outdated: "<gray>局面已经变了，这条悔棋作废</gray>"
+undo-accepted: "<gray>悔棋生效，</gray><side><gray> 重走这一手</gray>"
+
+# ---- 棋盘上方的可点击悬浮字 ----
+# 这几条不是聊天栏消息，是 TextDisplay 实体上的文字，也就是世界里的一块牌子。
+# 所以刻意不带 prefix，也不带 <dark_gray>»</dark_gray> 这类聊天栏分隔符 ——
+# 牌子只有一行、居中显示，前缀和分隔符只会占宽度把正文推偏。
+#
+# 前两条能点，用方括号包一下模拟按钮外形，让人一眼看出"这是能点的"，而不是一行说明文字。
+# 括号用 dark_gray 压暗，中间的动作词用 gold，视觉重心落在动作上。
+# 对局中那条沿用同样的方括号结构（里面装手数而非动作词），是为了让同一块牌子在整局里
+# 保持一致的外形，只有内容在变；它其实点不动，点击分发在 WAITING 之外直接返回。
+# 终局三条不用方括号：那时牌子只是结果告示，不该再暗示可点。
+#
+# 常驻的三条不用渐变：CLAUDE.md 把渐变限定给终局播报与菜单/帮助标题，那些是看一眼就过去的仪式性文案。
+# 悬浮字是常驻世界的物件，等人与对局期间一直挂在棋盘上方，每帧都在视野里，
+# 用渐变会变成持续闪烁的花字，反而比纯色更廉价、更抢棋盘的视线。所以按"普通提示"处理。
+#
+# 终局那三条是例外，允许渐变：一局棋只出现一次、看一眼就过去，与下面的 game-over-* 播报
+# 同属仪式性文案。它们的色值逐字对齐对应的 game-over-*，因为同一个终局事件会同时出现在
+# 聊天栏和棋盘上方，两处不同色会让人以为是两件事。
+#
+# 取舍：TextDisplay 的文字是实体属性而不是发给某个玩家的消息，全服看到的是同一份，
+# 不会按各自的语言文件渲染。多语言场景下这几条只会用服务端默认语言。
+# 括号里跟一个 <current>/2 报已入座人数，玩家不点也能看出还差几人。
+# 人数由 BoardLabelState.seatedCount 供给，第一个人坐下时牌子就会跟着变。
+label-join: "<dark_gray>[</dark_gray><gold>加入对局</gold> <gray><current>/2</gray><dark_gray>]</dark_gray>"
+label-start: "<dark_gray>[</dark_gray><gold>开始对局</gold><dark_gray>]</dark_gray>"
+
+# 对局中常驻显示，一行装完手数与轮次，不带棋种名 —— 棋盘长什么样已经说明了棋种。
+# <side> 由 Msg.sideName 填入，已自带阵营色（红方 gold、黑方 aqua），所以外层不再包色。
+# 不写死"红方/黑方"：五子棋与围棋是黑先，写死阵营在那两种棋上就是错的。
+label-playing: "<dark_gray>[</dark_gray><gold>第 <move> 手</gold><dark_gray>]</dark_gray> <gray>轮到 </gray><side>"
+
+# 终局有胜者。色值对齐 game-over-checkmate / stalemate / resign / line-win / score-win
+label-finished-win: "<gradient:#fbbf24:#f97316><bold><winner> 胜</bold></gradient>"
+
+# 超时判负单列一条，不并入 label-finished-win：game-over-timeout 用的是失败粉起手的
+# #fda4af:#f97316，与上面那条的 #fbbf24 起手不同。并进去就会出现聊天栏粉橙、牌子黄橙
+# 的同事异色，所以宁可多一条键，也要让两处逐字一致。
+label-finished-timeout: "<gradient:#fda4af:#f97316><bold>超时</bold></gradient> <winner><gray> 胜</gray>"
+
+# 终局和棋，涵盖限着、满盘、围棋数子平局三种。色值对齐 game-over-draw-*
+label-finished-draw: "<gradient:#7dd3fc:#fbbf24><bold>和棋</bold></gradient>"
+
+# 一方离开导致这局作废。色值对齐 game-over-quit。
+# 刻意既不写"和棋"也不写谁胜：GameResult.Quit 只记 loser，作废局不该凭空给对手记一场胜。
+label-finished-void: "<gradient:#94a3b8:#7dd3fc><bold>对局作废</bold></gradient>"
+
+# ---- 机器人 ----
+# 机器人用 alpha-beta 搜索（默认 2 层），会吃子、会堵连四、会避开明显的亏损交换。
+# 但它没有开局库也没有残局库，熟手能赢它。文案如实说明，不吹成"AI 高手"。
+bot-already: "<#fbbf24>该方已有机器人</#fbbf24> <dark_gray>»</dark_gray> <side>"
+bot-none: "<gray>本局无机器人</gray>"
+bot-ambiguous: "<#fbbf24>两方都是机器人</#fbbf24> <dark_gray>»</dark_gray> <gray>写清撤哪个：</gray><aqua>/chess bot remove red</aqua><gray> 或 </gray><aqua>/chess bot remove black</aqua>"
+bot-no-empty-seat: "<#fbbf24>无空位</#fbbf24> <dark_gray>»</dark_gray> <gray>双方均已入座</gray>"
+bot-game-finished: "<#fbbf24>本局已终局</#fbbf24> <dark_gray>»</dark_gray> <gray>请先移除棋盘</gray>"
+
+
+# ---- 入座与开局 ----
+# 入座成功的回执，走动作栏。
+# 只说世界里看不出来的两件事：现在坐了几个人、自己被分到哪一方（阵营是随机挑的，盘面看不出来）。
+# 不进聊天栏是延续"成功类播报不占聊天记录"那条决定，board-placed、piece-selected 都因此删过；
+# 但"我执哪一方"属于世界里读不到的信息，不能一起省掉，所以留在动作栏上。
+# 人数用 gold 突出（它是玩家真正要读的数字），说明文字走 gray；
+# <side> 由 side-* 自带颜色，这里不能再包一层 gold。
+seat-joined: "<gray>已入座</gray> <gold><current>/2</gold> <dark_gray>»</dark_gray> <gray>你执</gray> <side>"
+seat-taken: "<#fbbf24>该方已有玩家</#fbbf24> <dark_gray>»</dark_gray> <side>"
+seat-full: "<#fbbf24>双方已入座</#fbbf24> <dark_gray>»</dark_gray> <gray>你只能观战</gray>"
+game-finished: "<#fbbf24>本局已终局</#fbbf24> <dark_gray>»</dark_gray> <gray>移除棋盘后可开新局</gray>"
+# 命令回执，不是走棋交互提示：/chess leave、/chess resign 找不到你的座位时要说清为什么没反应。
+# 入座入口已从原来的 join 子命令改成棋盘上方的悬浮字，所以这里指路指向牌子而不是命令。
+# 走动作栏而不是聊天栏：命令回执只在当下有意义，连着敲两次不该占两行聊天记录。
+not-in-game: "<#fbbf24>你未参与本局</#fbbf24> <dark_gray>»</dark_gray> <gray>点棋盘上方的牌子入座</gray>"
+
+# ---- 点"开始对局"被拒的三种情况 ----
+# 棋盘放下后不再自动摆子：双方入座 → 有人点开始 → 才摆子。
+# 这三条都是点了牌子却没开局，必须说清卡在哪一步，否则玩家会反复点同一块牌子。
+start-not-full: "<#fbbf24>人数不足</#fbbf24> <dark_gray>»</dark_gray> <gray>尚缺一方入座，或用 </gray><aqua>/chess bot add</aqua><gray> 加机器人</gray>"
+start-already: "<#fbbf24>本局已开始</#fbbf24>"
+# 观战者点了牌子。牌子是世界里的物件，谁都点得到，所以这条必须存在。
+start-not-player: "<#fbbf24>你未参与本局</#fbbf24> <dark_gray>»</dark_gray> <gray>双方已入座，只能观战</gray>"
+
+# 开局播报，发给对局双方。
+#
+# 刻意不带占位符：调用点是 Msg.sendAll(session.audience(), "game-started")，一个参数都不传。
+# 漏传的占位符会被 MiniMessage 当未知标签忽略掉（见 MsgTemplate.render 的注释），
+# 写成 "<side> 先走" 的话实际会渲染成 "开局 » 先走"，比不写更糟。
+#
+# 也不写"红方先走"这种具体阵营：五子棋是黑先，写死阵营在别的棋种上就是错的。
+game-started: "<gold>开局</gold> <dark_gray>»</dark_gray> <gray>棋子已就位</gray>"
+
+# ---- 走棋交互 ----
+# 这里刻意没有任何提示文案。
+#
+# 选中一枚子时，全部合法落点已经用白圈标出、可吃子用红框标出，点在标记之外就是不能走。
+# 再用聊天栏复述一遍"马腿被别住""这不是你的棋子"属于同一信息说两遍，而且落子很频繁，
+# 一局下来会把聊天栏刷满，把终局播报和命令回执挤走。世界里的视觉反馈就是这里的提示。
+
+# ---- 局势播报 ----
+# 将军是唯一的例外：它是棋盘上看不出来的信息，必须明说。
+# 只有一条，全场同一句，走动作栏（聊天栏上方那一行）。
+# 不分"你被将了"和"对方被将了"：谁被将棋盘上一眼就看得出来。
+check-warning: "<#fbbf24><bold>将军</bold></#fbbf24>"
+
+# 围棋的禁自杀与打劫同属"棋盘上看不出来"的规则，所以与将军一样必须明说。
+# 落点已有子不在此列 —— 那个一眼看得见，沿用走棋交互"不出声"的处理。
+place-illegal-suicide: "<#fda4af>此着非法</#fda4af> <dark_gray>»</dark_gray> <gray>落子后无气</gray>"
+place-illegal-ko: "<#fda4af>此着非法</#fda4af> <dark_gray>»</dark_gray> <gray>劫争，不可立即提回</gray>"
+
+# ---- 限时读秒 ----
+# 这六条走动作栏，每秒刷一次，只在这局有时限（config.yml 的 turn-timeout-seconds 或
+# 菜单里单独设过）且已走出第一步之后出现；不限时的局一个包都不发，动作栏保持空白。
+#
+# 按"看的人能做什么"分三组，不是按阵营分：轮到自己是催他动手，轮到对手是让他知道
+# 还要等多久，观战者两边都不是他、必须报出是谁在走（<side> 由 Msg.sideName 填入，
+# 已自带阵营色，外层不能再包色）。分组判定见 TurnCountdownDecision.key。
+#
+# 每组两条，剩余 3 秒及以内换成 -urgent 那条。两条必须说同一件事、只有配色不同：
+# 加粗与告警黄用来在余光里也能看见，不改语义。阈值 3 秒的取舍见 URGENT_SECONDS 注释。
+# 常态用 gray 打底、秒数用 gold，与"数字用突出色、说明用正文色"的既有规则一致；
+# 不给常态用告警色，否则整局都是黄字，颜色就不再传递信息。
+#
+# 缺任意一条会让读秒静默跳过（只在控制台记一次），不会报错也不会发半截文案。
+turn-countdown-ours: "<gray>该你走 </gray><gold><seconds></gold><gray> 秒</gray>"
+turn-countdown-ours-urgent: "<#fbbf24>该你走 <bold><seconds></bold> 秒</#fbbf24>"
+turn-countdown-theirs: "<gray>对方思考 </gray><gold><seconds></gold><gray> 秒</gray>"
+turn-countdown-theirs-urgent: "<#fbbf24>对方剩 <bold><seconds></bold> 秒</#fbbf24>"
+turn-countdown-spectator: "<side><gray> 行棋 </gray><gold><seconds></gold><gray> 秒</gray>"
+turn-countdown-spectator-urgent: "<side><#fbbf24> 剩 <bold><seconds></bold> 秒</#fbbf24>"
+
+# ---- 终局 ----
+game-over-checkmate: "<gradient:#fbbf24:#f97316><bold>将死</bold></gradient> <dark_gray>»</dark_gray> <winner><gray> 获胜</gray>"
+game-over-stalemate: "<gradient:#fbbf24:#f97316><bold>困毙</bold></gradient> <dark_gray>»</dark_gray> <loser><gray> 无子可走，判负</gray>"
+game-over-resign: "<gradient:#fbbf24:#f97316><bold>认输</bold></gradient> <dark_gray>»</dark_gray> <loser><gray> 认输，</gray><winner><gray> 获胜</gray>"
+game-over-draw-move-limit: "<gradient:#7dd3fc:#fbbf24><bold>和棋</bold></gradient> <dark_gray>»</dark_gray> <aqua><limit></aqua><gray> 回合无吃子</gray>"
+# 双方同意的和棋。不带 winner/loser 占位符，因为这局没有输赢方。
+game-over-draw-agreement: "<gradient:#7dd3fc:#fbbf24><bold>和棋</bold></gradient> <dark_gray>»</dark_gray> <gray>双方同意和棋</gray>"
+game-over-timeout: "<gradient:#fda4af:#f97316><bold>超时</bold></gradient> <dark_gray>»</dark_gray> <loser><gray> 判负</gray>"
+game-over-quit: "<gradient:#94a3b8:#7dd3fc><bold>对局结束</bold></gradient> <dark_gray>»</dark_gray> <loser><gray> 离开，对局作废</gray>"
+# 五子棋赢在连五，不能复用"将死"那条文案。
+game-over-line-win: "<gradient:#fbbf24:#f97316><bold>连五</bold></gradient> <dark_gray>»</dark_gray> <winner><gray> 获胜</gray>"
+game-over-draw-full-board: "<gradient:#7dd3fc:#fbbf24><bold>和棋</bold></gradient> <dark_gray>»</dark_gray> <gray>棋盘下满了</gray>"
+# 围棋数子。子数含贴子，所以可能是 185.75 这种带小数的值。
+game-over-score-win: "<gradient:#fbbf24:#f97316><bold>终局</bold></gradient> <dark_gray>»</dark_gray> <winner><gray> 获胜 </gray><aqua><first></aqua><gray> 比 </gray><aqua><second></aqua>"
+game-over-score-draw: "<gradient:#7dd3fc:#fbbf24><bold>和棋</bold></gradient> <dark_gray>»</dark_gray> <gray>双方 </gray><aqua><first></aqua><gray> 比 </gray><aqua><second></aqua>"
+resign-confirm: "<#fbbf24>再次输入以确认认输</#fbbf24> <dark_gray>»</dark_gray> <aqua>/chess resign</aqua>"
+
+# ---- 围棋虚着 ----
+# 虚着在世界里没有任何视觉变化（不落子、不动棋子），所以必须播报给整桌，
+# 否则对手会一直盯着棋盘等着看变化。
+pass-done: "<gray>虚着</gray> <dark_gray>»</dark_gray> <side><gray> 这手不下</gray>"
+# 双方连续虚着即终局，走上面的 game-over-score-* 两条，这里不另写终局文案。
+pass-not-go: "<#fda4af>本棋种无虚着</#fda4af> <dark_gray>»</dark_gray> <gray>仅围棋适用</gray>"
+# 走动作栏。走棋交互那条 not-your-turn 聊天键已经删掉了，不能因为虚着又加回来；
+# 这条只在玩家抢着虚着时出现一次，淡出即可。
+pass-not-your-turn: "<#fbbf24>尚未轮到你行棋</#fbbf24>"
+# 等待方右键棋盘时的动作栏提示，与上面那条虚着提示是一对：一个管虚着、一个管走棋。
+# 同样只走动作栏不进聊天 —— 等待的人往往会反复点，进聊天框必然刷屏。
+# 不要因为"提示不明显"改成聊天键，那正是当初删掉 not-your-turn 聊天键的原因。
+click-not-your-turn: "<#fbbf24>尚未轮到你行棋</#fbbf24>"
+
+# ---- 命令帮助 ----
+help-header: "<gradient:#fbbf24:#7dd3fc><bold>MuChess</bold></gradient>"
+help-remove: "<aqua>/chess remove</aqua> <dark_gray>»</dark_gray> <gray>收走附近的棋盘</gray>"
+# help-join 已随 join 子命令一起删除：入座改由棋盘上方的悬浮字承担（见 label-join）。
+# 帮助里不再列一条玩家敲不出效果的命令。
+help-leave: "<aqua>/chess leave</aqua> <dark_gray>»</dark_gray> <gray>离座</gray>"
+help-resign: "<aqua>/chess resign</aqua> <dark_gray>»</dark_gray> <gray>认输</gray>"
+help-draw: "<aqua>/chess draw</aqua> <dark_gray>»</dark_gray> <gray>向对手提和</gray>"
+help-undo: "<aqua>/chess undo</aqua> <dark_gray>»</dark_gray> <gray>请求撤回自己刚走的一手</gray>"
+help-accept: "<aqua>/chess accept <draw|undo></aqua> <dark_gray>»</dark_gray> <gray>同意对手的和棋或悔棋请求</gray>"
+help-decline: "<aqua>/chess decline <draw|undo></aqua> <dark_gray>»</dark_gray> <gray>拒绝对手的和棋或悔棋请求</gray>"
+help-pass: "<aqua>/chess pass</aqua> <dark_gray>»</dark_gray> <gray>围棋虚着，双方连续虚着即终局数子</gray>"
+help-bot: "<aqua>/chess bot <add|remove> [红|黑]</aqua> <dark_gray>»</dark_gray> <gray>加或撤机器人，不写边就挑空位</gray>"
+help-forceremove: "<aqua>/chess forceremove</aqua> <dark_gray>»</dark_gray> <gray>拆掉正对着的棋盘，对局进行中也拆</gray>"
+help-reload: "<aqua>/chess reload</aqua> <dark_gray>»</dark_gray> <gray>重载配置与语言文件</gray>"
+help-pack: "<aqua>/chess pack</aqua> <dark_gray>»</dark_gray> <gray>重新生成 CraftEngine 资源包</gray>"
+help-debug: "<aqua>/chess debug <test 数量 类型|remove|sweep [半径]></aqua> <dark_gray>»</dark_gray> <gray>批量铺棋盘压测、收走测出来的那批，或清掉附近的残留显示实体</gray>"
+
+# ---- 系统与管理 ----
+no-permission: "<#fda4af>没有权限</#fda4af>"
+player-only: "<#fbbf24>只能由玩家执行</#fbbf24>"
+reload-done: "<gold>配置已重载</gold> <dark_gray>»</dark_gray> <gray>耗时 </gray><aqua><ms></aqua><gray>ms</gray>"
+reload-failed: "<#fda4af>重载失败</#fda4af> <dark_gray>»</dark_gray> <gray><reason></gray>"
+pack-generating: "<gold>正在生成资源包</gold>"
+pack-done: "<gold>资源包已写入</gold> <dark_gray>»</dark_gray> <aqua><count></aqua><gray> 个文件</gray>"
+pack-skipped: "<#fbbf24>已跳过资源包</#fbbf24> <dark_gray>»</dark_gray> <gray>没有检测到 CraftEngine</gray>"
+pack-failed: "<#fda4af>资源包生成失败</#fda4af> <dark_gray>»</dark_gray> <gray><reason></gray>"
+# 现状：这条**还没有调用点**，Msg.send 从未用过它。
+# CraftEngine 缺失目前只写控制台（CraftEngineBridge 里那句"没有可用的 CraftEngine…"），
+# 因为那是服主要看的部署问题，不是玩家能处理的事；玩家侧只在执行 /chess pack 时
+# 由 pack-skipped 告知。保留它是给"玩家点棋盘却没有外观"这类场景留的提示位。
+craftengine-missing: "<#fbbf24>没检测到 CraftEngine</#fbbf24> <dark_gray>»</dark_gray> <gray>棋盘和棋子外观不可用，规则部分照常</gray>"
+# 棋种名输错时提示，占位符 <type> 传玩家输入的原文。
+# 调用点：/chess debug test 的类型参数（见 ChessCommand.debug）。
+# 正常放置路径不用它 —— 那边棋种由 CE 家具 id 决定，玩家没有输错的机会。
+unknown-game-type: "<#fda4af>没有这个棋种</#fda4af> <dark_gray>»</dark_gray> <gold><type></gold>"
+
+# ---- 压测（/chess debug） ----
+# 只有管理员能看到这几条。数字用 aqua，说明用 gray，与其他管理消息一致。
+debug-busy: "<#fbbf24>上一次压测还没跑完</#fbbf24> <dark_gray>»</dark_gray> <gray>等它铺完再来</gray>"
+debug-count-invalid: "<#fda4af>数量不对</#fda4af> <dark_gray>»</dark_gray> <gray>要 1 到 </gray><aqua><max></aqua><gray> 之间的整数</gray>"
+debug-test-start: "<gold>开始铺棋盘</gold> <dark_gray>»</dark_gray> <aqua><count></aqua><gray> 副 </gray><gold><type></gold>"
+debug-test-done: "<gold>铺完了</gold> <dark_gray>»</dark_gray> <gray>成功 </gray><aqua><placed></aqua><gray>，失败 </gray><aqua><failed></aqua><gray>，棋种 </gray><gold><type></gold>"
+# total 是主线程实际花在放置与渲染上的净耗时，wall 是墙上时间（含跨 tick 等待）。
+# 两个都报是因为它们回答不同问题：total 说明开销，wall 说明玩家等了多久。
+debug-test-timing: "<gray>净耗时 </gray><aqua><total></aqua><gray>ms，其中铺子 </gray><aqua><render></aqua><gray>ms，均摊 </gray><aqua><per></aqua><gray>ms/副；墙上 </gray><aqua><wall></aqua><gray>ms 跨 </gray><aqua><ticks></aqua><gray> tick</gray>"
+debug-test-entities: "<gray>棋子实体 </gray><aqua><pieces></aqua><gray> 个，当前世界棋盘总数 </gray><aqua><boards></aqua>"
+debug-test-failures: "<gray>失败原因 </gray><dark_gray>»</dark_gray><gray> 放不下 </gray><aqua><nospace></aqua><gray>，超上限 </gray><aqua><limit></aqua><gray>，家具阻挡 </gray><aqua><furniture></aqua>"
+debug-remove-none: "<gray>本次开服还没用压测铺过棋盘</gray>"
+debug-remove-done: "<gold>压测棋盘已收</gold> <dark_gray>»</dark_gray> <gray>收走 </gray><aqua><removed></aqua><gray>，已不在 </gray><aqua><missing></aqua><gray>，耗时 </gray><aqua><ms></aqua><gray>ms，剩余棋盘 </gray><aqua><left></aqua>"
+# 清扫脱离索引的残留显示实体。分类报数是为了让服主看出漏的是哪一类，
+# 悬浮字与它的判定框合并成一个数：两者成对生成、成对销毁，分开报没有意义。
+debug-sweep-none: "<gray>附近 </gray><aqua><radius></aqua><gray> 区块内没有残留的显示实体</gray>"
+debug-sweep-done: "<gold>残留已清</gold> <dark_gray>»</dark_gray> <gray>共 </gray><aqua><count></aqua><gray> 个（棋子 </gray><aqua><pieces></aqua><gray>，落点 </gray><aqua><markers></aqua><gray>，悬浮字 </gray><aqua><labels></aqua><gray>），半径 </gray><aqua><radius></aqua><gray> 区块</gray>"
+
+# ---- 棋子名与阵营名，本身也是 MiniMessage 片段 ----
+# 红方固定使用 gold，黑方固定使用 aqua；调用方直接把片段填进占位符，不再二次包颜色。
+piece-red-king: "<gold>帥</gold>"
+piece-red-advisor: "<gold>仕</gold>"
+piece-red-elephant: "<gold>相</gold>"
+piece-red-horse: "<gold>馬</gold>"
+piece-red-chariot: "<gold>車</gold>"
+piece-red-cannon: "<gold>炮</gold>"
+piece-red-pawn: "<gold>兵</gold>"
+piece-black-king: "<aqua>將</aqua>"
+piece-black-advisor: "<aqua>士</aqua>"
+piece-black-elephant: "<aqua>象</aqua>"
+piece-black-horse: "<aqua>馬</aqua>"
+piece-black-chariot: "<aqua>車</aqua>"
+piece-black-cannon: "<aqua>砲</aqua>"
+piece-black-pawn: "<aqua>卒</aqua>"
+side-red: "<gold>红方</gold>"
+side-black: "<aqua>黑方</aqua>"
+# 五子棋与围棋是黑先白后，阵营名与象棋的红/黑分开取键（见 GameType.sideSlug）。
+# 配色沿用"先手 gold、后手 aqua"，不用纯黑：聊天栏里的黑字几乎看不见。
+side-stone-black: "<gold>黑棋</gold>"
+side-stone-white: "<aqua>白棋</aqua>"

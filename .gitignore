@@ -1,0 +1,11 @@
+build/
+.gradle/
+.kotlin/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+.idea/
+*.iml
+# AI 规划与内部资料，不入库
+.narrafork/
+# 发布附件暂存目录
+dist/

@@ -1,0 +1,424 @@
+// ============================================================================
+// 【历史记录，不参与编译】
+//
+// 这是本项目尝试 Paper 装载格式（paper-plugin.yml + PluginLoader）时写的类路径构建器。
+// 该方案已废弃：Paper 装载格式与 TabooLib 的隔离加载器机制存在结构性冲突 ——
+// 引导层被 define 三次，CONST 任务注册与生命周期跑批落在不同的 lifeCycleTask 静态表上，
+// 类扫描不发生，插件 Loading/Enabling 全过、零报错，但配置不释放、命令不注册。
+// 详细取证（-Xlog:class+init 抓到的三个类镜像地址与 062d/062e 段归属）见 build.gradle.kts
+// 里"为什么本项目不用 Paper 装载格式"那段说明。
+//
+// 现行方案是传统 Bukkit 装载（只留 plugin.yml）：Bukkit 的 PluginClassLoader 会查 ucp，
+// TabooLib 的原生注入本来就有效，整条链只有一个类加载器。
+//
+// 后缀改成 .txt 是为了让它不被 Gradle 当源文件编译。留着的价值是下面那些实测细节 ——
+// Paper 加载器的 findClass/loadClass 行为、TabooLib 缓存布局与 _r<N>_<hash> 命名约定、
+// 重定位前缀推法。将来若 TabooLib 官方支持 Paper 格式，这里是起点而不是白纸。
+//
+// 【注意】以下正文里凡是说"本类如何工作""必须这样做"的表述，都是当时那个方案的语境，
+// 不代表现行装载方式。不要照着改现有代码。
+// ============================================================================
+
+package linmumua.chess.platform;
+
+import io.papermc.paper.plugin.loader.PluginClasspathBuilder;
+import io.papermc.paper.plugin.loader.PluginLoader;
+import io.papermc.paper.plugin.loader.library.impl.JarLibrary;
+
+import java.io.File;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Paper 插件装载格式下的类路径构建器。
+ *
+ * <h2>为什么必须是 Java 而不是 Kotlin</h2>
+ *
+ * 本类运行时 <b>Kotlin 标准库还没装上</b> —— 装它正是本类的工作。用 Kotlin 写的话，
+ * {@code runCatching}、{@code walkTopDown} 这些一调就 {@code NoClassDefFoundError}，
+ * 插件在类路径构建阶段就挂。所以这里只用 JDK 自带的东西，全项目唯一的 Java 源文件。
+ *
+ * <h2>为什么需要这个类</h2>
+ *
+ * Paper 插件的类加载器
+ * （{@code PaperPluginClassLoader extends PaperSimplePluginClassLoader extends URLClassLoader}）
+ * 重写了 {@code findClass}，<b>只从插件 JAR 自身读字节码</b>：
+ *
+ * <pre>
+ * // PaperSimplePluginClassLoader.findClass，Paper 官方源码
+ * if (entry == null) {
+ *     throw new ClassNotFoundException(name);   // 没有 super.findClass 兜底
+ * }
+ * </pre>
+ *
+ * TabooLib 的运行期下载靠 {@code ClassAppender.addPath} 反射往 {@code URLClassLoader}
+ * 的 {@code ucp} 塞 URL。那个字段在 Paper 加载器上<b>是继承来的、确实存在</b>，
+ * 所以注入不会报错 —— 但上面这段说明注入进去的 jar 永远不会被查到。
+ * 注入静默成功、类却找不到，比直接报错更难查。
+ *
+ * {@code PaperPluginClassLoader.loadClass} 留了第二条路：
+ *
+ * <pre>
+ * if (checkLibraries) {
+ *     return this.libraryLoader.loadClass(name);
+ * }
+ * </pre>
+ *
+ * {@code libraryLoader} 由 Paper 官方的 {@link PluginLoader} 机制填充。所以在 Paper 格式下，
+ * Kotlin 与 TabooLib 各模块必须<b>由 Paper 装进 libraryLoader</b>，而不是由 TabooLib 自己塞。
+ *
+ * <h2>顺序</h2>
+ *
+ * {@link #classloader} 在插件主类加载<b>之前</b>由 Paper 调用。此时能用的只有插件 JAR 里
+ * 已有的类，也就是 TabooLib 的引导层（约 26 个类，含 {@code PrimitiveLoader}）。
+ * 所以这里直接驱动 TabooLib 自己的下载与重定位流程，再把它落盘的成品交给 Paper ——
+ * 不自己实现下载，也不自己实现重定位。
+ *
+ * <h2>与 plugin.yml 的关系</h2>
+ *
+ * JAR 里同时保留 {@code plugin.yml}。Paper 优先读 {@code paper-plugin.yml}，走本类这条路；
+ * 万一本类出问题，删掉 {@code paper-plugin.yml} 就退回传统 Bukkit 装载 —— 那条路上
+ * TabooLib 的原生注入是有效的，因为 Bukkit 的 {@code PluginClassLoader} 会查 ucp。
+ *
+ * <h2>已知耦合</h2>
+ *
+ * 本类依赖 TabooLib 两处内部约定：{@code PrimitiveLoader.init()} 会完成下载与重定位，
+ * 且成品落在 {@code PrimitiveLoader.getCacheFile()} 目录下。两处都是反编译 6.3.0 核对的，
+ * 不是公开 API。TabooLib 升级若改了缓存布局，这里会跟着坏 —— 症状是启动时报 Kotlin 类
+ * 找不到，届时要重新核对 {@code PrimitiveLoader.loadFile} 的落盘位置。
+ */
+public class PaperClasspath implements PluginLoader {
+
+    @Override
+    public void classloader(PluginClasspathBuilder builder) {
+        File cache = null;
+        try {
+            cache = prepareInIsolatedLoader();
+        } catch (Throwable error) {
+            // 不允许吞异常：这一步失败通常意味着 Kotlin 与 TabooLib 缺失，插件很可能启动不了。
+            // 此处没有 Bukkit logger 可用（插件还没加载），只能走标准错误。
+            System.err.println("[MuChess] TabooLib 运行期依赖准备未完成："
+                + error.getClass().getSimpleName() + " " + error.getMessage());
+            error.printStackTrace();
+            // 注意这里**不 return**。
+            //
+            // 最常见的失败原因是下载中断（实测撞到过两次 UnknownHostException: maven.aliyun.com）。
+            // 那种情况下缓存里往往已经有上几轮攒下的大部分 jar，继续往下走把它们交给 Paper，
+            // 缺哪个报哪个，比这里直接放弃更有救 —— 直接 return 会让 libraryLoader 一个库都没有，
+            // 于是主类初始化必然以完全无关的 "RuntimeEnv 找不到" 倒下，把网络问题伪装成类加载问题，
+            // 排查方向被彻底带偏。这一条是实测踩了两次才看清的。
+            //
+            // 真的什么都没准备好时，下面的 jars.isEmpty() 会给出准确诊断。
+            if (cache == null) {
+                cache = fallbackCacheDir();
+            }
+        }
+        if (cache == null || !cache.isDirectory()) {
+            System.err.println("[MuChess] 找不到 TabooLib 重定位缓存目录，插件将无法启动。"
+                + "若上面有下载失败的报错，先解决网络（默认源 maven.aliyun.com）后重启；"
+                + "网络正常却仍报这条，说明 TabooLib 改了缓存布局，"
+                + "需要重新核对 PrimitiveLoader.getCacheFile 的落盘位置。");
+            return;
+        }
+
+        List<File> jars = new ArrayList<>();
+        collectJars(cache, jars);
+        // 还要收 libraries/ 下的重定位产物。
+        //
+        // 这条是 -verbose:class 实测挖出来的。TabooLib 的重定位产物**不只落在 cache/taboolib**：
+        // Kotlin 与 coroutines 这类走 RuntimeEnv 的依赖，重定位后是写回原 Maven 布局的，
+        // 文件名加 _r<N>_<hash> 后缀（如
+        // libraries/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.7.3/
+        //   kotlinx-coroutines-core-jvm-1.7.3_r2_513419977.jar）。
+        //
+        // 只扫 cache/taboolib 的后果极其隐蔽：kotlin2320.Lazy 能找到（它在 stdlib，
+        // 恰好被另一轮注入带进来了），但 kotlin2320x.coroutines173.CoroutineScope 找不到。
+        // 而 TabooLib.lifeCycle 开头的 isKotlinEnvironment() 同时检查这两个类，少一个就抛异常，
+        // 异常又被 BukkitPlugin 静态块吞掉 —— 于是插件 Loading、Enabling 全过，日志一片干净，
+        // 然后所有 @Awake / @SubscribeEvent / @Schedule 一个都不触发，配置也不释放。
+        // 排查了三轮冷启动才定位到这里。
+        File libraries = new File("libraries");
+        if (libraries.isDirectory()) {
+            collectRelocatedJars(libraries, jars);
+        }
+        if (jars.isEmpty()) {
+            System.err.println("[MuChess] TabooLib 缓存目录 " + cache.getAbsolutePath()
+                + " 里没有 jar，插件将无法启动。");
+            return;
+        }
+        for (File jar : jars) {
+            builder.addLibrary(new JarLibrary(jar.toPath()));
+        }
+
+        pointScannerAtPluginJar();
+
+        // 还要把插件 JAR 自身交给 libraryLoader 一次。
+        //
+        // 这条是上服实测第三次失败换来的。前面已经把重定位产物都给了 Paper，但插件主类
+        // 初始化仍然倒下：
+        //
+        //   NoClassDefFoundError: linmumua/taboolib/common/PrimitiveSettings
+        //     at RuntimeEnvAssets.<init> → RuntimeEnv.<clinit>
+        //     at PrimitiveLoader.loadFile → IsolatedClassLoader.init
+        //     at BukkitPlugin.<clinit>
+        //
+        // 成因：BukkitPlugin 的静态初始化无条件调 IsolatedClassLoader.init（与
+        // enable-isolated-classloader 开关无关，那个开关只管往哪注入），里面又跑一轮
+        // PrimitiveLoader.init。TabooLib 自身的基础依赖（common-env 等）那一轮是以
+        // isolated=false 加载的，也就是注入到 Paper 的插件加载器上 —— 而重定位后的
+        // RuntimeEnv 一被初始化就要回头引用 PrimitiveSettings，那个类在插件 JAR 里，
+        // Paper 加载器的 findClass 只读 JAR 自身本该找得到……但它是被 libraryLoader
+        // 这条链找的（见报错栈里的 URLClassLoader.findClass），而 libraryLoader 里
+        // 没有插件 JAR，链就断在这儿。
+        //
+        // 所以把插件 JAR 也加进 libraryLoader：引导层的类在两条链上都能找到，
+        // 谁先命中都拿到同一份字节码。JarLibrary 只是把 URL 挂上去，不会重复解压，
+        // 代价可以忽略。
+        //
+        // 【实测结论：引导层被 define 了三次，这是本方案当前的致命缺陷】
+        //
+        // 用 -Xlog:class+init=info 抓到的三次 TabooLib 类初始化（地址即类镜像，互不相同）：
+        //
+        //   3.560s   0x...05391438   ServerMain     ← 本类 prepareInIsolatedLoader 的临时 URLClassLoader
+        //   17.851s  0x...062d06b8   Server thread  ← BukkitPlugin 引用的那份（062d 段）
+        //   17.930s  0x...062d8908   Server thread  ← IsolatedClassLoader.init 里又一份
+        //
+        // 同一份字节码被不同加载器各自 define，得到的是**不同的类**，静态字段互不相通。
+        // TabooLib.lifeCycleTask 正是静态表，于是：
+        //   · 第二轮 ClassVisitorHandler / PlatformFactory 的 init 把 CONST 任务注册进
+        //     062e 段那族（实测 TabooLib$2 在 0x...062e95b8）
+        //   · BukkitPlugin 却在 062d 段那份上调 lifeCycle(CONST) 跑批
+        // 注册与跑批分属两个类、两张表，跑批读到空表。表现：
+        //   生命周期 "CONST" 用时 0 毫秒 → 永不打印 RunningClasses → ClassVisitorAwake 一次都不初始化
+        //   → 类扫描不发生 → ChessPlugin 从未加载 → 插件 Loading/Enabling 全过却什么都不做、零报错。
+        //
+        // 注意 -verbose:class 看不出这个问题：它对同名类只报一行，必须用 class+init 才能看见
+        // 多次 Initializing 与不同的类镜像地址。这一点排查时踩过好几轮。
+        //
+        // 把插件 JAR 加进 libraryLoader 是造成 define 多份的直接原因之一，但去掉它会让
+        // 重定位 jar 里的 RuntimeEnv 找不到 PrimitiveSettings（见上文）。两难，需要换方案，
+        // 不是靠调整这里的顺序能解决的。
+        try {
+            File self = selfJar();
+            builder.addLibrary(new JarLibrary(self.toPath()));
+        } catch (Throwable error) {
+            System.err.println("[MuChess] 无法把插件 JAR 加进 libraryLoader，主类初始化可能失败："
+                + error.getClass().getSimpleName() + " " + error.getMessage());
+        }
+
+    }
+
+    /**
+     * 递归收集 {@code libraries/} 下 TabooLib 的重定位产物。
+     *
+     * 只认 {@code _r<数字>_<数字>.jar} 结尾的：那是 TabooLib 重定位后写回的成品，
+     * 同目录下没有后缀的是下载来的原版（未重定位，包名还是 {@code kotlin.*}），
+     * 把原版也加进去会让 {@code kotlin.Lazy} 与 {@code kotlin2320.Lazy} 同时存在，
+     * 徒增困惑且没有用处 —— TabooLib 编译产物引用的只有重定位后的名字。
+     *
+     * 同一个依赖可能有多组 hash（每轮 {@code PrimitiveLoader.init()} 按当次的重定位规则集
+     * 各产出一组，本插件在 PluginLoader 与 BukkitPlugin 静态块各跑一轮，所以常见两组）。
+     * 这里全部收下：多余的那组只是类路径上多几个 jar，同名类由先命中的胜出，
+     * 而两组内容对同一版本依赖是等价的。挑"最新一组"反而危险 —— 要靠时间戳猜，
+     * 并发写入时会挑错。
+     */
+    private void collectRelocatedJars(File dir, List<File> out) {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectRelocatedJars(child, out);
+            } else if (RELOCATED_JAR.matcher(child.getName()).matches()) {
+                out.add(child);
+            }
+        }
+    }
+
+    /** TabooLib 重定位产物的文件名特征：原名 + _r&lt;规则集号&gt;_&lt;hash&gt;.jar */
+    private static final java.util.regex.Pattern RELOCATED_JAR =
+        java.util.regex.Pattern.compile(".+_r\\d+_\\d+\\.jar");
+
+    /**
+     * 告诉 TabooLib 的类扫描器该扫哪个 JAR。
+     *
+     * <h2>不设会怎样（实测症状）</h2>
+     *
+     * 插件能 {@code Loading} 也能 {@code Enabling}，然后<b>什么都不做</b>：数据目录不建、
+     * config.yml 与 lang/ 一个都不释放、debug=true 却一行 DEBUG 都不打、也没有任何报错。
+     * 所有 {@code @Awake} / {@code @SubscribeEvent} / {@code @Schedule} 全不触发。
+     * 这个症状在项目构建脚本的注释里被记为"跳过重定位"的后果，但在 Paper 装载格式下
+     * 由另一个原因引起，表现完全一样，很容易误判。
+     *
+     * <h2>成因</h2>
+     *
+     * {@code ProjectScannerKt.runningClassMapInJar} 是靠遍历一个 JAR 的条目来收集"本项目的类"的。
+     * 它优先读系统属性 {@code <relocate>.taboolib.main} 指定的类，用它的
+     * {@code protectionDomain.codeSource} 定位那个 JAR；属性缺失时退回
+     * {@code TabooLib::class.java.protectionDomain.codeSource}。
+     *
+     * 传统 Bukkit 装载下这个退路是对的：TabooLib 的类是注入到插件类加载器的，codeSource
+     * 就是插件 JAR。但 Paper 装载下 TabooLib 来自 {@code libraryLoader} 里那些<b>重定位后的
+     * 缓存 jar</b>，codeSource 指向 {@code cache/taboolib/.../common-util-*.jar} ——
+     * 扫的是 TabooLib 自己的模块 jar，本项目的类一个也不在里面。
+     *
+     * 所以这里显式把属性指向本类（本类必定在插件 JAR 内），扫描目标就回到插件 JAR。
+     *
+     * <h2>属性名为什么要拼</h2>
+     *
+     * 属性名带重定位前缀（本项目是 {@code linmumua.chess.taboolib}）。不能写死字面量：
+     * 那个前缀由构建脚本的重定位规则决定，写死会在改包名时静默失效 —— 而失效的表现正是
+     * 上面那种"启动了但什么都不做"，没有任何报错指向这里。所以从本类所在包反推。
+     */
+    private static void pointScannerAtPluginJar() {
+        // 重定位前缀取包名**首段**，不是"去掉最后一段"。
+        //
+        // 实测核对（unzip -l 产物）：引导层落在 linmumua/taboolib/common/TabooLib.class，
+        // 即重定位根是 linmumua.taboolib —— 而本类在 linmumua.chess.platform。
+        // 早先按"去掉最后一段"推成 linmumua.chess.taboolib，属性名于是拼成
+        // linmumua.chess.taboolib.main，TabooLib 永远读不到，设了等于没设，
+        // 且没有任何报错指向这里（表现就是插件启动却不工作）。
+        String selfPackage = PaperClasspath.class.getPackage().getName();
+        int firstDot = selfPackage.indexOf('.');
+        String relocateRoot = firstDot <= 0 ? selfPackage : selfPackage.substring(0, firstDot);
+        if (relocateRoot.isEmpty()) {
+            System.err.println("[MuChess] 无法从包名 " + selfPackage
+                + " 推出重定位前缀，TabooLib 类扫描可能扫错 JAR（表现为插件启动却不工作）");
+            return;
+        }
+        String mainKey = relocateRoot + ".taboolib.main";
+        // 已经有值就不覆盖：服主或其他机制可能已经指定过
+        if (System.getProperty(mainKey) == null) {
+            System.setProperty(mainKey, PaperClasspath.class.getName());
+        }
+    }
+
+    /**
+     * 准备阶段抛异常时的缓存目录兜底。
+     *
+     * 不能再调 {@code PrimitiveLoader.getCacheFile()}：那个类此刻可能正处于初始化失败状态。
+     * 路径按 TabooLib 的既有约定拼（{@code cache/taboolib/<projectPackageName>}，
+     * 反编译 6.3.0 的 getCacheFile 核对过），拼错或目录不存在时返回 null，
+     * 由调用方按"缓存目录找不到"报错。
+     */
+    private static File fallbackCacheDir() {
+        File root = new File("cache/taboolib");
+        if (!root.isDirectory()) {
+            return null;
+        }
+        // projectPackageName 是重定位后的包名首段，这里不猜具体值：
+        // 直接返回上层目录，让递归扫描把底下所有 jar 都收进来。
+        return root;
+    }
+
+    /**
+     * 定位插件 JAR 自身。
+     *
+     * 取本类的 code source 而不是猜路径：插件文件名带版本号，服主也可能改名，
+     * 写死或按名字搜都会在换版本时静默失效。
+     */
+    private static File selfJar() throws Exception {
+        return new File(
+            PaperClasspath.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+        );
+    }
+
+    /**
+     * 在一个自建的普通 {@link URLClassLoader} 里驱动 TabooLib 的下载与重定位，
+     * 返回它落盘的缓存目录。
+     *
+     * <h2>为什么不能直接调 PrimitiveLoader.init()</h2>
+     *
+     * 这是上服实测的结论，试过两次都倒下：
+     *
+     * <pre>
+     * 第一次: ClassNotFoundException: me.lucko.jarrelocator.Relocation
+     * 第二次: ClassNotFoundException: linmumua.taboolib.common.env.RuntimeEnv
+     *           at PrimitiveLoader.loadFile(PrimitiveLoader.java:267)   ← Class.forName
+     * </pre>
+     *
+     * {@code PrimitiveLoader} 不是"下载完就算了"：它<b>每处理一个 jar 就要
+     * {@code Class.forName} 用里面的类</b>，而这些类是它刚刚靠 {@code ClassAppender.addPath}
+     * 注入进来的。在 Paper 的加载器上那次注入不可见（{@code findClass} 只读插件 JAR 自身），
+     * 于是每一步都以同样方式失败 —— 往插件 JAR 里补依赖是条填不满的坑，补完一个卡下一个。
+     *
+     * <h2>做法</h2>
+     *
+     * {@code ClassAppender.getClassLoader()} 在非隔离模式下返回的是<b>加载 TabooLib.class
+     * 的那个加载器</b>。所以这里新建一个普通 {@link URLClassLoader}，URL 指向插件 JAR 本身，
+     * 让 TabooLib 引导层从它加载：那是个标准 URLClassLoader，{@code findClass} 会查 ucp，
+     * 于是注入与 {@code Class.forName} 在这个加载器内部闭环，重定位能一路跑完。
+     *
+     * parent 传 {@code null}（即 bootstrap 加载器）而不是当前加载器：传当前的会让
+     * 双亲委派优先命中 Paper 加载器里那份引导层，{@code TabooLib.class.getClassLoader()}
+     * 就又指回去了，等于没换。
+     *
+     * 这个加载器只用来跑下载与重定位，跑完即弃。插件真正运行时用的是 Paper 从
+     * {@code libraryLoader} 加载的那份，两者互不干扰 —— 重定位产物落在磁盘上，
+     * 是跨加载器传递的唯一媒介。
+     */
+    private File prepareInIsolatedLoader() throws Exception {
+        File self = selfJar();
+
+        // parent = null → bootstrap 加载器。这样 taboolib.* 只能从下面这个 URL 里找，
+        // 不会被双亲委派抢先命中 Paper 加载器里的同名类。
+        //
+        // 【务必保持"跑完即弃"，不要试图复用这一轮的静态状态】
+        //
+        // 这个加载器里的 TabooLib / LifeCycle / PlatformFactory / ClassVisitorHandler
+        // 都是**独立副本**。PrimitiveLoader.init() 除了下载与重定位，还会顺带反射调用各模块
+        // META-INF/taboolib/extra.properties 声明的 init 钩子：
+        //
+        //   common-util        → common.inject.ClassVisitorHandler, common.io.ProjectScannerKt
+        //   common-platform-api→ common.platform.PlatformFactory
+        //
+        // 这两个 init 都会往 TabooLib.lifeCycleTask 注册 CONST 阶段任务（真正触发类扫描、
+        // 找到 ChessPlugin、注册 @Awake 的就是 PlatformFactory 注册的那个）。它们注册进的是
+        // **本加载器副本**的静态表，随 close() 一起废弃。
+        //
+        // 这不影响正确性：BukkitPlugin 静态块会在 Paper 加载器里完整再跑一轮 PrimitiveLoader.init()，
+        // 那一轮的注册与跑批在同一份静态状态里闭环。本轮的唯一产出是**落在磁盘上的重定位 jar**，
+        // 那才是跨加载器传递的媒介（见 classloader 方法里把产物交给 libraryLoader 的部分）。
+        //
+        // 排查提示：如果日志出现"生命周期 CONST 用时 0 毫秒"且始终不打印
+        // "RunningClasses (All)"，说明跑批那一轮的 lifeCycleTask 是空表 —— 该查的是
+        // 第二轮为何没注册，而不是往这里加状态回传。往这里回传只会让两份状态互相污染。
+        try (URLClassLoader isolated = new URLClassLoader(
+            new URL[]{self.toURI().toURL()}, null)) {
+
+            Class<?> loader = isolated.loadClass("taboolib.common.PrimitiveLoader");
+            // 确认真的是从我们这个加载器来的，否则下面的注入又会落到 Paper 加载器上，
+            // 白跑一遍还报同样的错，那种情况必须当场发现而不是等它再倒一次
+            if (loader.getClassLoader() != isolated) {
+                throw new IllegalStateException(
+                    "PrimitiveLoader 仍由 " + loader.getClassLoader() + " 加载，隔离失败");
+            }
+            loader.getMethod("init").invoke(null);
+            return (File) loader.getMethod("getCacheFile").invoke(null);
+        }
+    }
+
+    /**
+     * 递归收集目录下所有 jar。
+     *
+     * 递归而不是只扫一层：TabooLib 的缓存按模块分目录落盘，具体层级不是公开约定，
+     * 写死深度会在它调整布局时静默漏掉一部分 jar —— 那会表现成"某几个模块的类找不到"，
+     * 比整个目录为空更难定位。
+     */
+    private void collectJars(File dir, List<File> out) {
+        File[] children = dir.listFiles();
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            if (child.isDirectory()) {
+                collectJars(child, out);
+            } else if (child.getName().toLowerCase().endsWith(".jar")) {
+                out.add(child);
+            }
+        }
+    }
+}
